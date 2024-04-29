@@ -1,0 +1,214 @@
+---
+title: "Fuel Economy in Vehicles"
+author: "Brandon Cunningham"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+# Abstract
+
+In this paper we use data from the Department of Energy to investigate various aspects of vehicles by plotting these factors and using a linear regression model attempt to assess their impact on the fuel economy of vehicles as measured by combined miles per gallon (MPG). Through this analysis it is found that there are many factors, including the transmission type of the vehicle, engine displacement, and more that all have significant impact on the combined MPG, and that the factor with the largest impact on combined MPG is the fuel type of the vehicle.
+
+# Data Preperation and Graphing
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(eval = TRUE, message = FALSE, warning = FALSE)
+library(knitr)
+library(dplyr)
+library(readr)
+library(tidyverse)
+library(ggplot2)
+library(psych)
+```
+
+```{r echo=TRUE, results='hide', warning=FALSE, message=FALSE}
+url <- 'https://raw.githubusercontent.com/btc2628/DATA607/main/fuel_data/fuel.csv'
+fuel_raw <- readr::read_csv(url)
+fuel_narrowed <- fuel_raw[, c('year', 'drive', 'transmission', 'engine_cylinders', 
+        'engine_displacement', 'turbocharger', 'fuel_type', 'combined_mpg_ft1')]
+```
+
+```{r}
+fuel_narrowed <- fuel_narrowed %>%
+  mutate(transmission = str_extract(transmission, "^[^\\s\\(]+"))
+
+fuel_narrowed <- fuel_narrowed %>%
+  mutate(drive = case_when( grepl("4-Wheel Drive|All-Wheel Drive", drive) ~ 
+                              "4-Wheel or All-Wheel Drive", TRUE ~ drive))
+```
+
+
+```{r}
+describe(fuel_narrowed$combined_mpg_ft1)
+```
+
+```{r}
+ggplot(fuel_narrowed, aes(x=combined_mpg_ft1)) + 
+   geom_bar(fill="red") +
+  labs(x='Combined MPG', y='Frequency')
+```
+Here we get an overview of the distribution of fuel economies in the data set, it has a mean of 20.22mpg and median of 19mpg with a mainly normal distribution with a slight right skew and a few extreme outliers to the right.
+```{r}
+describe(fuel_narrowed$year)
+```
+```{r}
+ggplot(fuel_narrowed, aes(x=year)) + 
+   geom_bar() +
+  labs(x='Year')
+```
+The data in this dataset has cars from year 1984 to 2017, with a relatively even distribution between the years. For the sake of prediction we are going to change year to be the number of years since 1984 so the year variable will start at 0.
+
+```{r}
+fuel_narrowed$year <- fuel_narrowed$year -1984
+ggplot(fuel_narrowed, aes(x=year)) + 
+   geom_bar() +
+  labs(x='Year')
+```
+```{r}
+ggplot(fuel_narrowed, aes(x=reorder(fuel_type, combined_mpg_ft1, FUN=median),
+                          y=combined_mpg_ft1, fill=fuel_type)) + 
+   geom_bar(stat="summary", fun="median", show.legend = FALSE) +
+  labs(x='Fuel Type', y='Combined MPG') +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+In the above graph we can see that any car that uses electricity has a larger median combined MPG than every other fuel type, and we can see the ranking of the rest of the fuel types.
+
+```{r}
+ggplot(fuel_narrowed, aes(x=year, y=combined_mpg_ft1, group=fuel_type, fill=fuel_type)) + 
+   geom_bar(stat="summary", fun="median", show.legend = FALSE) +
+  facet_wrap(~fuel_type, scales = 'free_x') + 
+  labs(x='Years Since 1984', y='Combined MPG') +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+The graphs above show the average fuel mileage of cars per year over time, the graphs are separated into different fuel types as different fuels have different energy densities, or like in the case of electric cars, different ways of measuring their mpg equivalents. 
+
+```{r}
+describe(fuel_narrowed$engine_cylinders)
+```
+```{r}
+ggplot(fuel_narrowed, aes(x=engine_cylinders, y=combined_mpg_ft1)) + 
+   geom_bar(stat="summary", fun="median", show.legend = FALSE, fill="blue") +
+  labs(x='Engine Cylinders', y='Combined MPG') 
+```
+The graph above shows the relationship between an engines cylinders and its combined MPG, the relationship appears to be exponential decay with changes in MPG being more drastic as the displacement increases from a low value and leveling off over time, with the exception of silgle cylinder engines which appear to be less efficient than 2 cylinder engines.
+```{r}
+describe(fuel_narrowed$engine_displacement)
+```
+```{r}
+ggplot(fuel_narrowed, aes(x=engine_displacement, y=combined_mpg_ft1)) + 
+   geom_bar(stat="summary", fun="mean", show.legend = FALSE, fill="purple") +
+  labs(x='Engine Displacement (liters)', y='Combined MPG') 
+```
+The graph above shows the relationship between an engines displacement in liters and its combined MPG, the relationship appears to be exponential decay with changes in MPG being more drastic as the displacement increases from a low value and leveling off over time.
+
+```{r}
+categorical_cols <- c('drive', 'transmission', 'turbocharger', 'fuel_type')
+categorical_summary <- list()
+
+for (col in categorical_cols) {
+  categorical_summary[[col]] <- table(fuel_narrowed[[col]], useNA = "ifany")
+}
+
+categorical_summary
+```
+```{r}
+ggplot(fuel_narrowed, aes(x=drive, y=combined_mpg_ft1, fill=drive)) + 
+   geom_bar(stat="summary", fun="median", show.legend = FALSE) +
+  labs(x='Drive', y='Combined MPG') +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+From this graph we can see that front wheel drive cars appear to have the highest combined MPG with cars without a drive named having around the same fuel millage as front wheel drive, and all other types having around the same lower value.
+
+```{r}
+ggplot(fuel_narrowed, aes(x=transmission, y=combined_mpg_ft1, fill=transmission)) + 
+   geom_bar(stat="summary", fun="median", show.legend = FALSE) +
+  labs(x='Transmission Type', y='Combined MPG') +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+This graph shows the relationship between transmission type and combined MPG, there does not appear to be much of a relationship between the two aside from that when transmission type is not given then there is a much higher combined MPG. However, after looking through the data this is because 9 of 11 of the NA's are for electric vehicles which is far more than would be expected. 
+
+```{r}
+fuel_narrowed$turbocharger[is.na(fuel_narrowed$turbocharger)] <- FALSE
+```
+
+
+```{r}
+ggplot(fuel_narrowed, aes(x=turbocharger, y=combined_mpg_ft1)) + 
+   geom_bar(stat="summary", fun="median", show.legend = FALSE) +
+  labs(x='Turbocharer', y='Combined MPG') 
+```
+This graph shows that cars with a turbocharger appear to have slightly higher combined fuel mileage than cars without a turbocharger.
+
+# Finding important columns
+
+```{r}
+fuel_omitted <- na.omit(fuel_narrowed)
+nrow(fuel_omitted)/nrow(fuel_narrowed)
+```
+The first step is to make sure all of the data has no missing values. Since as we can see above over 95% of the rows has no missing values we can simply drop all rows where data is missing and use the remaining rows for analysis. 
+
+
+```{r}
+fuel_model <- lm(combined_mpg_ft1 ~ ., data = fuel_omitted)
+summary(fuel_model)
+```
+```{r}
+reduced_fuel_model <- step(fuel_model, direction = "backward")
+reduced_fuel_model
+```
+What we can see from the linear model summary and backwards steps is that there is not a single column that if removed would improve the performance of the linear model, therefore the model is good as is and does not need to be re-fitted to a new subset of columns. Then looking at the multiple and adjusted r-squared values which are essentially identical at 0.73 meaning that 73% of the variance can be explained by the predictors and as the two values are so similar, adding more predictors probably won't improve the accuracy.
+
+
+# Residuals
+```{r}
+ggplot(data = fuel_model, aes(x = .fitted, y = .resid)) +
+  geom_point(alpha=0.05) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  xlab("Fitted values") +
+  ylab("Residuals")
+```
+
+```{r}
+ggplot(data = fuel_model, aes(x = .resid)) +
+  geom_histogram(binwidth = .5) +
+  xlab("Residuals") +
+  ylab("Frequency")
+```
+There are no clear patterns which stand out in the plot of residuals against fitted values, while there are some extreme outliers, with well over 30 thousand data points this is to be expected, and the vast majority of the points fall along the 0 line. For the histogram we can see an almost perfect normal distribution centered on 0 with a possible slight right skew from some outliers. Overall there do not appear to be any patterns in the residuals that would indicate that least squares regression is not appropriate.
+  
+# Final Model
+
+Predicted_MPG = 27.6333 
+                  + 0.1459 * year 
+                  - 1.3215 * drive4wd 
+                  + 1.9030 * drivefwd 
+                  - 0.2732 * driverwd  
+                  - 2.5355 * transmissionAuto 
+                  - 1.8421 * transmissionManual 
+                  - 0.3994 * engine_cylinders  
+                  - 1.9508 * engine_displacement 
+                  - 0.9792 * turbocharger  
+                  + 7.7618 * fuel_typeDiesel 
+                  + 0.1775 * fuel_typeGasolineOrE85 
+                  - 1.3132 * fuel_typeGasolineOrNaturalGas 
+                  + 0.2301 * fuel_typeGasolineOrPropane 
+                  + 2.5800 * fuel_typeMidgrade 
+                  + 0.5639 * fuel_typePremium  
+                  + 4.0000 * fuel_typePremiumAndElectricity 
+                  + 5.8558 * fuel_typePremiumOrElectricity 
+                  + 1.7987 * fuel_typePremiumOrE85  
+                  + 0.6560 * fuel_typeRegular 
+                  + 15.4798 * fuel_typeRegularGasAndElectricity 
+                  + 14.7821 * fuel_typeRegularGasOrElectricity
+
+# Conclusion
+Through this analysis we have seen that almost all factors that go into the design of a vehicle can have some impact on the fuel economy and therefore environmental impact of the vehicle. Many of the factors above like fuel type, transmission type, engine cylinders, etc... are factors that manufacturers have full control over when designing the vehicle regardless of whether they're designing a truck, sedan, or any other vehicle type, so having a better understanding of what choices lead to better combined MPG can help these manufactures make better informed decisions on the impact of the vehicles they are designing. With all that in mind, this analysis has a few limitations, firstly this data only includes vehicles from 1984 to 2017. Another limitation is that this data set is based purely on US vehicles and US fuel economy standards, any vehicles sold exclusively outside of the US would not be included, and other countries will have different methods of measuring fuel economy which may or may not produce the same results as the analysis based on the US Department of Energy's Combined MPG standard.
+
+
+
+
+
+
