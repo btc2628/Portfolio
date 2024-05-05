@@ -228,7 +228,7 @@ sunday_data <- merged_data %>% filter(`Day of Week` == "Sun")
 ggplot(sunday_data, aes(x = Date, y = tips_per_hour, color = factor(Bartender))) +
   geom_point() + 
   geom_smooth(method = "lm", se = FALSE) + 
-  labs(color = "Bartender", y='Average Inflation Adjusted Tips per Hour', x='Number of Days Since Start') +
+  labs(color = "Bartender", y='Inflation Adjusted Tips per Hour on Sundays', x='Number of Days Since Start') +
   scale_color_manual(values = c("0" = "red", "1" = "blue"), labels = c("0" = "Serving", "1" = "Bartending"))
 
 ```
