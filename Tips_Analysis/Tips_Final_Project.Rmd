@@ -1,0 +1,278 @@
+---
+title: "Tips_Final_Project"
+author: "Brandon Cunningham"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(eval = TRUE, message = FALSE, warning = FALSE)
+library(knitr)
+library(rvest)
+library(jsonlite)
+library(fredr)
+library(dplyr)
+library(lubridate)
+library(purrr)
+library(readr)
+library(tidyverse)
+library(ggplot2)
+library(psych)
+```
+
+# Introduction
+In this paper I will be using approximately a year and a half of data collected from time sheets from my girlfriends time as a server and bartender for Olive Garden. I will be looking into trends in the data over time, in days as a server instead of a bartender, length of shifts, the day of the week, and looking into anecdotal observations such as that rainy days are better than clear days, colder days are better than warmer days, and that days where the Buffalo Bills have a game are worse than normal days. The data I was able to collect from time sheets only includes the total time worked for shift and total tips for the shift so other factors such as the total sales for the shift, number of customers severed, and section where she was serving cannot be accounted for. Lastly, the method of determining how good a shift was will be in inflation adjusted tips per hour, and will not include base pay before tips as this is a constant that is not effected by any of the factors we are interested in.
+
+```{r}
+url_tips <- 'https://raw.githubusercontent.com/btc2628/DATA607/main/Tips_Final_Project/Olive_Garden_Tips.csv'
+tips_data <- readr::read_csv(url_tips)
+```
+
+```{r}
+url_weather <- 'https://raw.githubusercontent.com/btc2628/DATA607/main/Tips_Final_Project/weather.csv'
+weather_data <- readr::read_csv(url_weather)
+```
+
+```{r Bills_2022_Schedule}
+url_2022 <- "https://fbschedules.com/2022-buffalo-bills-schedule/"
+page_2022 <- read_html(url_2022)
+nodes_2022 <- html_nodes(page_2022, xpath = "//script[@type='application/ld+json']")
+content_2022 <- html_text(nodes_2022)
+dates_2022 <- lapply(content_2022, function(json) {
+  parsed <- fromJSON(json, flatten = TRUE)
+  if("startDate" %in% names(parsed)) {
+    return(data.frame(Date = parsed$startDate))
+  } else {
+    return(data.frame(Date = NA))
+  }
+})
+```
+
+```{r Bills_2023_Schedule}
+url_2023 <- "https://fbschedules.com/2023-buffalo-bills-schedule/"
+page_2023 <- read_html(url_2023)
+nodes_2023 <- html_nodes(page_2023, xpath = "//script[@type='application/ld+json']")
+content_2023 <- html_text(nodes_2023)
+dates_2023 <- lapply(content_2023, function(json) {
+  parsed <- fromJSON(json, flatten = TRUE)
+  if("startDate" %in% names(parsed)) {
+    return(data.frame(Date = parsed$startDate))
+  } else {
+    return(data.frame(Date = NA))
+  }
+})
+```
+
+```{r Combining_Game_Dates}
+bills_dates <- bind_rows(dates_2023, dates_2022) %>%
+  filter(!is.na(Date))
+bills_dates$Date <- as.Date(bills_dates$Date, "%Y-%m-%d")
+bills_dates$bills_game <- 1
+```
+
+```{r}
+fredr_set_key("") #Put your api key in here
+
+cpi_data <- fredr(series_id = "CUURX100SEFV", #CPI Dataset on Northeast food away from home
+                  observation_start = as.Date("2022-08-21"),
+                  frequency = "m",
+                  units = "lin")
+```
+
+In the past few blocks of code I have loaded in all necessary datasets for analysis, this includes the tips data I personally collected, weather data collected from the National Oceanic and Atmospheric Administration, Bills game schedules for 2022 and 2023, and CPI data for food away from home in the north east from the Federal Reserve.
+
+```{r}
+starting_cpi <- cpi_data %>%
+  filter(date == as.Date("2022-8-01")) %>%
+  pull(value)
+cpi_data$percent <- cpi_data$value/starting_cpi
+cpi_data <- cpi_data[, c('date', 'percent', 'value')]
+cpi_data$date <- as.Date(cpi_data$date, "%Y-%m-%d")
+
+ggplot(data = cpi_data, aes(x = date, y = percent)) +
+  geom_point() +
+  xlab("Date") +
+  ylab("Reltive Price of Food Away Home") 
+```
+  
+In this graph we can see the relative price of food away from home in the north east using August of 2022 as a starting point.
+```{r}
+tips_data$Date <- as.Date(tips_data$Date, "%m/%d/%Y")
+tips_data$Date <- format(tips_data$Date, "%Y-%m-%d")
+tips_data$Date <- as.Date(tips_data$Date, "%Y-%m-%d")
+```
+
+```{r}
+bar_start <- as.Date('2023-10-01', "%Y-%m-%d")
+tips_data$Bartender <- ifelse(tips_data$`Day of Week` == 'Sun', ifelse(tips_data$Date >= bar_start, 1, 0), 0)
+tips_data$Tips <- as.numeric(sub("\\$", "", tips_data$Tips))
+tips_data$Tips <- ifelse(tips_data$Bartender == 1, ifelse(tips_data$Tips != 0, tips_data$Tips + 5, 0), tips_data$Tips)
+```
+In this code block I am adding $5 to every bar shift. The reasoning for this is that for every bar shift there is a 1 hour portion before the restaurant is opened where the bartender prepares for opening, and during this time the bartender is paid at regular minimum wage instead of tipped minimum wage.
+
+```{r}
+tips_data <- tips_data %>% mutate(date_floor = floor_date(Date, "month"))
+tips_data <- merge(tips_data, cpi_data, by.x="date_floor", by.y="date")
+
+tips_data$adjusted_tips <- tips_data$Tips * (starting_cpi/tips_data$value)
+
+tips_data <- tips_data %>% filter(Tips != 0)
+
+ggplot(data = tips_data, aes(x = Date, y = adjusted_tips)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  xlab("Date") +
+  ylab("Total Tips Adjusted for inflation") 
+```
+    
+In this graph we can see all inflation adjusted tips over time, and while their is a wide spread, there is a general downward trend over time.
+
+
+
+```{r}
+tips_bills <- merge(tips_data, bills_dates, by = "Date", all.x = TRUE)
+```
+
+```{r}
+weather_data$precipitated <- ifelse(weather_data$PRCP >= 0.1, 1, 0)
+weather_data$precipitated <- ifelse(weather_data$SNOW >= 0.2, 1, weather_data$precipitated)
+weather_data$TAVG[is.na(weather_data$TAVG)] <- (weather_data$TMAX + weather_data$TMIN)/2
+weather_narrowed <- weather_data[, c('DATE', 'precipitated', 'PRCP', 'SNOW', 'TAVG')]
+```
+
+```{r}
+merged_data <- merge(tips_bills, weather_narrowed, by.x = "Date", by.y = "DATE")
+
+merged_data[is.na(merged_data)] <- 0
+
+merged_data$Date <- as.Date(merged_data$Date, "%Y-%m-%d")
+start_date <- as.Date("2022-08-21")
+merged_data$Date <- as.numeric(merged_data$Date - start_date)
+
+merged_data$shift_length <- merged_data$Hours + (merged_data$Minutes/60)
+
+merged_data$tips_per_hour <- merged_data$adjusted_tips/merged_data$shift_length
+```
+
+```{r}
+ggplot(data = merged_data, aes(x = Date, y = tips_per_hour, color=`Day of Week`)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  xlab('Number of Days Since Start') +
+  ylab("Tips Per Hour Adjusted for inflation")
+```
+  
+Here we can see the the same plot as before but broken down to day of week level and it becomes clear that some days are better than others, and that some days like Friday seem to get better and better over time when compared to the rest of the days.
+
+```{r}
+tips_summary <- summary(merged_data$tips_per_hour)
+tips_summary["Standard Deviation"] <- sd(merged_data$tips_per_hour)
+tips_summary["Variance"] <- var(merged_data$tips_per_hour)
+tips_summary
+```
+
+
+```{r}
+ggplot(data = merged_data, aes(x = tips_per_hour)) +
+  geom_histogram() +
+  xlab("Tips Per Hour Adjusted for inflation") +
+  ylab("Frequency")
+```
+  
+With this histogram and previous stats we can see that tips per hour is mostly normally distributed with a center around $21 with a slight right skew and a standard deviation of \$5.25.
+
+```{r}
+average_tips <- merged_data %>%
+  group_by(`Day of Week`, precipitated) %>%
+  summarise(average_tips_per_hour = mean(tips_per_hour, na.rm = TRUE), .groups = 'drop')
+
+ggplot(average_tips, aes(x = `Day of Week`, y = average_tips_per_hour, fill = factor(precipitated))) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(fill = "Weather", y = "Average Inflation Adjusted Tips per Hour", x = "Day of Week") +
+  theme_minimal() +
+  scale_fill_manual(values = c("0" = "blue", "1" = "red"), labels = c("0" = "No Precipitation", "1" = "Precipitation"))
+```
+
+```{r}
+t_test_weather <- t.test(tips_per_hour ~ precipitated, data = merged_data)
+
+t_test_weather
+```
+From a visual inspection of the graph and the t-test we must conclude that there is no significant relationship between whether it rained or snowed and the amount of tips made per hour.
+```{r}
+bills_tips <- merged_data %>%
+  group_by(`Day of Week`, bills_game) %>%
+  summarise(average_tips_per_hour = mean(tips_per_hour, na.rm = TRUE), .groups = 'drop') %>%
+  filter(`Day of Week` %in% c("Sun", "Sat", "Mon"))
+
+
+ggplot(bills_tips, aes(x = `Day of Week`, y = average_tips_per_hour, fill = factor(bills_game))) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(fill = "Bills Game", y = "Average Inflation Adjusted Tips per Hour", x = "Day of Week") +
+  theme_minimal() +
+  scale_fill_manual(values = c("0" = "blue", "1" = "red"), labels = c("0" = "No Game", "1" = "Game"))
+```
+
+```{r}
+t_test_bills <- t.test(tips_per_hour ~ bills_game, data = merged_data)
+
+t_test_bills
+```
+From a visual inspection of the graph and the t-test we must conclude that although it is close, using a 95% confidence level we must conclude that there is no significant relationship between whether there was a bills game that day and the amount of tips made per hour.
+
+```{r}
+sunday_data <- merged_data %>% filter(`Day of Week` == "Sun")
+
+ggplot(sunday_data, aes(x = Date, y = tips_per_hour, color = factor(Bartender))) +
+  geom_point() + 
+  geom_smooth(method = "lm", se = FALSE) + 
+  labs(color = "Bartender", y='Inflation Adjusted Tips per Hour on Sundays', x='Number of Days Since Start') +
+  scale_color_manual(values = c("0" = "red", "1" = "blue"), labels = c("0" = "Serving", "1" = "Bartending"))
+```
+
+```{r}
+model_server <- lm(tips_per_hour ~ Date, data = filter(sunday_data, Bartender == 0))
+model_bartender <- lm(tips_per_hour ~ Date, data = filter(sunday_data, Bartender == 1))
+summary(model_server)
+summary(model_bartender)
+```
+
+```{r}
+t_test_bar <- t.test(tips_per_hour ~ Bartender, data = sunday_data)
+
+t_test_bar
+```
+What this t-test tells us is that there is no significant relationship between average tips per hour on a Sunday from before and after she started working as a bartender on Sundays.
+
+```{r}
+ggplot(merged_data, aes(x = shift_length, y = tips_per_hour)) +
+  geom_point() + 
+  geom_smooth(method = "lm", se = FALSE) + 
+  labs(y='Inflation Adjusted Tips per Hour', x='Length of shift (hours)') 
+```
+The line of best fit appears to be almost perfectly flat, with a large spread on either side of the line suggesting that the length of the sift does not have any effect on the tips per hour of the shift
+
+```{r}
+tips_model <- lm(tips_per_hour ~ Date + `Day of Week` + Bartender + bills_game + shift_length + precipitated + TAVG, data = merged_data)
+summary(tips_model)
+```
+Here we have the linear model if we were to include all of the factors we looked at, however since we know many of them are not significant we should preform backward elimination to figure out which features are best to keep in the model and which would be best to eliminate.
+
+```{r}
+reduced_tips_model <- step(tips_model, direction = "backward")
+reduced_tips_model
+```
+
+```{r}
+reduced_model <- lm(formula = tips_per_hour ~ Date + `Day of Week`, data = merged_data)
+summary(reduced_model)
+```
+This reduced model goes to show that most of the factors looked into have no significant effect on tips made per hour, with only day of week and the intercept having significance at a 95% confidence level, and with an adjusted R-squared value of 0.05114 the only thing we can be certain of is that this model would not be a good predictor of tips for any given day.
+  
+# Conclusion
+What this project has taught me more than anything is to be skeptical of any anecdotes or assumptions made without supporting evidence. Coming into this project I had a firm belief that winter was a better time to be a server at Olive Garden than summer, and that the weather had some effect on the amount of customers who would show up, and therefore tips that would be made, and I was near confident that the shift to bartending was an overall bad move, however one by one each of these assumptions failed to hold up when the data was scrutinized. The main insight to gather is that serving is a highly random profession, with a standard deviation that is 25% of the median, you can expect that there will be lots of really bad shifts and really good shifts and that these will just need to be taken in stride as from the factors I was able to analyze the only way to improve your chances of making more money is to gain more experiece, and to avoid working on Sunday and Monday.
+
+
+
